@@ -32,6 +32,7 @@ import (
 	"time"
 
 	. "k8s.io/klog"
+	klogv2 "k8s.io/klog/v2"
 )
 
 // TODO: This test package should be refactored so that tests cannot
@@ -392,7 +393,8 @@ func TestRolloverHelperProcess(t *testing.T) {
 		t.Fatal("Wrong number of args")
 	}
 
-	MaxSize = 512
+	klogv2.MaxSize = 512
+	MaxSize = klogv2.MaxSize
 	flagset := flag.NewFlagSet("klog", flag.ContinueOnError)
 	InitFlags(flagset)
 	flagset.Set("logtostderr", "false")
