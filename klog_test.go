@@ -27,6 +27,7 @@ import (
 	"runtime"
 	"strconv"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 )
@@ -324,13 +325,16 @@ func TestVmoduleOff(t *testing.T) {
 func TestSetOutputDataRace(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
+	var wg sync.WaitGroup
 	for i := 1; i <= 50; i++ {
 		go func() {
 			logging.flushDaemon()
 		}()
 	}
 	for i := 1; i <= 50; i++ {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			SetOutput(ioutil.Discard)
 		}()
 	}
@@ -340,7 +344,9 @@ func TestSetOutputDataRace(t *testing.T) {
 		}()
 	}
 	for i := 1; i <= 50; i++ {
+		wg.Add(1)
 		go func() {
+			defer wg.Done()
 			SetOutputBySeverity("INFO", ioutil.Discard)
 		}()
 	}
@@ -349,6 +355,7 @@ func TestSetOutputDataRace(t *testing.T) {
 			logging.flushDaemon()
 		}()
 	}
+	wg.Wait()
 }
 
 // vGlobs are patterns that match/don't match this file at V=2.
