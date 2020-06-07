@@ -308,13 +308,28 @@ func TestVmoduleOff(t *testing.T) {
 	}
 }
 
+func flushDaemon(stop <-chan struct{}) {
+	ticker := time.NewTicker(5 * time.Second)
+	for {
+		select {
+		case <-stop:
+			ticker.Stop()
+			return
+		case <-ticker.C:
+			Flush()
+		}
+	}
+}
+
 func TestSetOutputDataRace(t *testing.T) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
+	stop := make(chan struct{})
+	defer testCleanup()
 	var wg sync.WaitGroup
 	for i := 1; i <= 50; i++ {
 		go func() {
-			logging.flushDaemon()
+			flushDaemon(stop)
 		}()
 	}
 	for i := 1; i <= 50; i++ {
@@ -326,7 +341,7 @@ func TestSetOutputDataRace(t *testing.T) {
 	}
 	for i := 1; i <= 50; i++ {
 		go func() {
-			logging.flushDaemon()
+			flushDaemon(stop)
 		}()
 	}
 	for i := 1; i <= 50; i++ {
@@ -338,10 +353,11 @@ func TestSetOutputDataRace(t *testing.T) {
 	}
 	for i := 1; i <= 50; i++ {
 		go func() {
-			logging.flushDaemon()
+			flushDaemon(stop)
 		}()
 	}
 	wg.Wait()
+	close(stop)
 }
 
 // vGlobs are patterns that match/don't match this file at V=2.
