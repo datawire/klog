@@ -18,7 +18,6 @@ package klog
 
 import (
 	"bytes"
-	"flag"
 	"fmt"
 	"io/ioutil"
 	stdLog "log"
@@ -34,19 +33,6 @@ import (
 
 // TODO: This test package should be refactored so that tests cannot
 // interfere with each-other.
-
-// Test that shortHostname works as advertised.
-func TestShortHostname(t *testing.T) {
-	for hostname, expect := range map[string]string{
-		"":                "",
-		"host":            "host",
-		"host.google.com": "host",
-	} {
-		if got := shortHostname(hostname); expect != got {
-			t.Errorf("shortHostname(%q): expected %q, got %q", hostname, expect, got)
-		}
-	}
-}
 
 // flushBuffer wraps a bytes.Buffer to satisfy flushSyncWriter.
 type flushBuffer struct {
@@ -544,21 +530,6 @@ func TestLogBacktraceAt(t *testing.T) {
 	}
 }
 
-func BenchmarkHeader(b *testing.B) {
-	for i := 0; i < b.N; i++ {
-		buf, _, _ := logging.header(infoLog, 0)
-		logging.putBuffer(buf)
-	}
-}
-
-func BenchmarkHeaderWithDir(b *testing.B) {
-	logging.addDirHeader = true
-	for i := 0; i < b.N; i++ {
-		buf, _, _ := logging.header(infoLog, 0)
-		logging.putBuffer(buf)
-	}
-}
-
 func BenchmarkLogs(b *testing.B) {
 	setFlags()
 	defer logging.swap(logging.newBuffers())
@@ -634,18 +605,3 @@ func TestFileSizeCheck(t *testing.T) {
 	}
 }
 
-func TestInitFlags(t *testing.T) {
-	fs1 := flag.NewFlagSet("test1", flag.PanicOnError)
-	InitFlags(fs1)
-	fs1.Set("log_dir", "/test1")
-	fs1.Set("log_file_max_size", "1")
-	fs2 := flag.NewFlagSet("test2", flag.PanicOnError)
-	InitFlags(fs2)
-	if logging.logDir != "/test1" {
-		t.Fatalf("Expected log_dir to be %q, got %q", "/test1", logging.logDir)
-	}
-	fs2.Set("log_file_max_size", "2048")
-	if logging.logFileMaxSizeMB != 2048 {
-		t.Fatal("Expected log_file_max_size to be 2048")
-	}
-}
