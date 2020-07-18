@@ -8,7 +8,7 @@ Using
 -----
 
 ```shell
-go mod edit -replace=k8s.io/klog=github.com/datawire/klog
+go mod edit -replace=k8s.io/klog=github.com/datawire/klog@v1.0.1
 ```
 
 As simple as that, code that uses klog v1 will be calling in to klog v2.
