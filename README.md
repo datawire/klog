@@ -1,97 +1,38 @@
-klog
-====
+klog v1 shim
+============
 
-klog is a permanent fork of https://github.com/golang/glog.
+This is a fork of [`k8s.io/klog`](https://github.com/kubernetes/klog) v1 that proxies everything to klog v2; so that
+klog v2 can coexist with libraries still using klog v1.
 
-## Why was klog created?
+Using
+-----
 
-The decision to create klog was one that wasn't made lightly, but it was necessary due to some
-drawbacks that are present in [glog](https://github.com/golang/glog). Ultimately, the fork was created due to glog not being under active development; this can be seen in the glog README:
+```shell
+go mod edit -replace=k8s.io/klog=github.com/datawire/klog
+```
 
-> The code in this repo [...] is not itself under development
+As simple as that, code that uses klog v1 will be calling in to klog v2.
 
-This makes us unable to solve many use cases without a fork. The factors that contributed to needing feature development are listed below:
+Changes from klog v1.0.0
+------------------------
 
- * `glog` [presents a lot "gotchas"](https://github.com/kubernetes/kubernetes/issues/61006) and introduces challenges in containerized environments, all of which aren't well documented.
- * `glog` doesn't provide an easy way to test logs, which detracts from the stability of software using it
- * A long term goal is to implement a logging interface that allows us to add context, change output format, etc.
- 
-Historical context is available here:
+Backported fixes:
+- Backport fix for running on Windows Nano (https://github.com/kubernetes/klog/issues/124)
+- Backport fix for setting `-log_backtrace_at` to an empty string (https://github.com/kubernetes/klog/pull/115)
+- Backport fix for `-add_dir_header` not working correctly at all (https://github.com/kubernetes/klog/pull/101)
 
- * https://github.com/kubernetes/kubernetes/issues/61006
- * https://github.com/kubernetes/kubernetes/issues/70264
- * https://groups.google.com/forum/#!msg/kubernetes-sig-architecture/wCWiWf3Juzs/hXRVBH90CgAJ
- * https://groups.google.com/forum/#!msg/kubernetes-dev/7vnijOMhLS0/1oRiNtigBgAJ
+Changes:
+- Backport change from v2 where whenever we log a fatal message to stderr in addition to the normal log, also write to
+  stderr the stacktrace that is written to the normal log (https://github.com/kubernetes/klog/pull/79)
+- The `klogv1.Stats` variable is now of type `*OutputStats` instead of `OutputStats`
+- Setting the global `klogv1.MaxSize` variable no longer has any affect, you must set `klogv2.MaxSize` to have an
+  affect.
 
-----
+Limitations compared to klog v2
+-------------------------------
 
-How to use klog
-===============
-- Replace imports for `github.com/golang/glog` with `k8s.io/klog`
-- Use `klog.InitFlags(nil)` explicitly for initializing global flags as we no longer use `init()` method to register the flags
-- You can now use `log-file` instead of `log-dir` for logging to a single file (See `examples/log_file/usage_log_file.go`)
-- If you want to redirect everything logged using klog somewhere else (say syslog!), you can use `klog.SetOutput()` method and supply a `io.Writer`. (See `examples/set_output/usage_set_output.go`)
-- For more logging conventions (See [Logging Conventions](https://github.com/kubernetes/community/blob/master/contributors/devel/sig-instrumentation/logging.md))
-
-### Coexisting with glog
-This package can be used side by side with glog. [This example](examples/coexist_glog/coexist_glog.go) shows how to initialize and syncronize flags from the global `flag.CommandLine` FlagSet. In addition, the example makes use of stderr as combined output by setting `alsologtostderr` (or `logtostderr`) to `true`.
-
-## Community, discussion, contribution, and support
-
-Learn how to engage with the Kubernetes community on the [community page](http://kubernetes.io/community/).
-
-You can reach the maintainers of this project at:
-
-- [Slack](https://kubernetes.slack.com/messages/sig-architecture)
-- [Mailing List](https://groups.google.com/forum/#!forum/kubernetes-sig-architecture)
-
-### Code of conduct
-
-Participation in the Kubernetes community is governed by the [Kubernetes Code of Conduct](code-of-conduct.md).
-
-----
-
-glog
-====
-
-Leveled execution logs for Go.
-
-This is an efficient pure Go implementation of leveled logs in the
-manner of the open source C++ package
-	https://github.com/google/glog
-
-By binding methods to booleans it is possible to use the log package
-without paying the expense of evaluating the arguments to the log.
-Through the -vmodule flag, the package also provides fine-grained
-control over logging at the file level.
-
-The comment from glog.go introduces the ideas:
-
-	Package glog implements logging analogous to the Google-internal
-	C++ INFO/ERROR/V setup.  It provides functions Info, Warning,
-	Error, Fatal, plus formatting variants such as Infof. It
-	also provides V-style logging controlled by the -v and
-	-vmodule=file=2 flags.
-
-	Basic examples:
-
-		glog.Info("Prepare to repel boarders")
-
-		glog.Fatalf("Initialization failed: %s", err)
-
-	See the documentation for the V function for an explanation
-	of these examples:
-
-		if glog.V(2) {
-			glog.Info("Starting transaction...")
-		}
-
-		glog.V(2).Infoln("Processed", nItems, "elements")
-
-
-The repository contains an open source version of the log package
-used inside Google. The master copy of the source lives inside
-Google, not here. The code in this repo is for export only and is not itself
-under development. Feature requests will be ignored.
-
-Send bug reports to golang-nuts@googlegroups.com.
+- Setting `klogv1.MaxSize` has no affect; you must set `klogv2.MaxSize` to have an affect.
+- When using `klogv2.SetLogger(logr.Logger)`, calls to `klogv1.V(verbosity)` do not inform the underlying `logr.Logger`
+  is of what the verbosity is; the logger's `.V(verbosity)` method is not called.  The verbosity value is used by klog
+  to decide whether to call in to the logger at all, but is not passed to to the logger.  In order for the logger to be
+  informed of the verbosity, you must use `klogv2.V(verbosity)`.
