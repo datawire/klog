@@ -1,13 +1,14 @@
-package klogr
+package klogr_test
 
 import (
 	"bytes"
 	"flag"
 	"testing"
 
-	"k8s.io/klog"
-
 	"github.com/go-logr/logr"
+
+	"k8s.io/klog"
+	. "k8s.io/klog/klogr"
 )
 
 func TestInfo(t *testing.T) {

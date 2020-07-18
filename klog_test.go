@@ -14,10 +14,11 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
-package klog
+package klog_test
 
 import (
 	"bytes"
+	"flag"
 	"fmt"
 	"io/ioutil"
 	stdLog "log"
@@ -29,10 +30,12 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	. "k8s.io/klog"
 )
 
 // TODO: This test package should be refactored so that tests cannot
-// interfere with each-other.
+// interfere with each-other, and don't require the mutex in testSetup.
 
 // flushBuffer wraps a bytes.Buffer to satisfy flushSyncWriter.
 type flushBuffer struct {
@@ -47,25 +50,9 @@ func (f *flushBuffer) Sync() error {
 	return nil
 }
 
-// swap sets the log writers and returns the old array.
-func (l *loggingT) swap(writers [numSeverity]flushSyncWriter) (old [numSeverity]flushSyncWriter) {
-	l.mu.Lock()
-	defer l.mu.Unlock()
-	old = l.file
-	for i, w := range writers {
-		logging.file[i] = w
-	}
-	return
-}
-
-// newBuffers sets the log writers to all new byte buffers and returns the old array.
-func (l *loggingT) newBuffers() [numSeverity]flushSyncWriter {
-	return l.swap([numSeverity]flushSyncWriter{new(flushBuffer), new(flushBuffer), new(flushBuffer), new(flushBuffer)})
-}
-
 // contents returns the specified log value as a string.
 func contents(s severity) string {
-	return logging.file[s].(*flushBuffer).String()
+	return global.outputs[s].String()
 }
 
 // contains reports whether the string is contained in the log.
@@ -73,16 +60,10 @@ func contains(s severity, str string, t *testing.T) bool {
 	return strings.Contains(contents(s), str)
 }
 
-// setFlags configures the logging flags how the test expects them.
-func setFlags() {
-	logging.toStderr = false
-	logging.addDirHeader = false
-}
-
 // Test that Info works as advertised.
 func TestInfo(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
+	_, testCleanup := testSetup(t)
+	defer testCleanup()
 	Info("test")
 	if !contains(infoLog, "I", t) {
 		t.Errorf("Info has wrong character: %q", contents(infoLog))
@@ -93,8 +74,8 @@ func TestInfo(t *testing.T) {
 }
 
 func TestInfoDepth(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
+	_, testCleanup := testSetup(t)
+	defer testCleanup()
 
 	f := func() { InfoDepth(1, "depth-test1") }
 
@@ -152,8 +133,8 @@ func TestCopyStandardLogToPanic(t *testing.T) {
 
 // Test that using the standard log package logs to INFO.
 func TestStandardLog(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
+	_, testCleanup := testSetup(t)
+	defer testCleanup()
 	stdLog.Print("test")
 	if !contains(infoLog, "I", t) {
 		t.Errorf("Info has wrong character: %q", contents(infoLog))
@@ -165,47 +146,54 @@ func TestStandardLog(t *testing.T) {
 
 // Test that the header has the correct format.
 func TestHeader(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
-	defer func(previous func() time.Time) { timeNow = previous }(timeNow)
-	timeNow = func() time.Time {
-		return time.Date(2006, 1, 2, 15, 4, 5, .067890e9, time.Local)
-	}
-	pid = 1234
+	_, testCleanup := testSetup(t)
+	defer testCleanup()
 	Info("test")
-	var line int
-	format := "I0102 15:04:05.067890    1234 klog_test.go:%d] test\n"
-	n, err := fmt.Sscanf(contents(infoLog), format, &line)
-	if n != 1 || err != nil {
+	var (
+		tm   time.Month
+		td   int
+		tH   int
+		tM   int
+		tS   int
+		tU   int
+		line int
+	)
+	format := fmt.Sprintf("I%%02d%%02d %%02d:%%02d:%%02d.%%06d %7d klog_test.go:%%d] test\n", os.Getpid())
+	n, err := fmt.Sscanf(contents(infoLog), format,
+		&tm, &td, &tH, &tM, &tS, &tU, &line)
+	if n != 7 || err != nil {
 		t.Errorf("log format error: %d elements, error %s:\n%s", n, err, contents(infoLog))
 	}
 	// Scanf treats multiple spaces as equivalent to a single space,
 	// so check for correct space-padding also.
-	want := fmt.Sprintf(format, line)
+	want := fmt.Sprintf(format, tm, td, tH, tM, tS, tU, line)
 	if contents(infoLog) != want {
 		t.Errorf("log format error: got:\n\t%q\nwant:\t%q", contents(infoLog), want)
 	}
 }
 
 func TestHeaderWithDir(t *testing.T) {
-	setFlags()
-	logging.addDirHeader = true
-	defer logging.swap(logging.newBuffers())
-	defer func(previous func() time.Time) { timeNow = previous }(timeNow)
-	timeNow = func() time.Time {
-		return time.Date(2006, 1, 2, 15, 4, 5, .067890e9, time.Local)
-	}
-	pid = 1234
+	_, testCleanup := testSetup(t, "add_dir_header", "true")
+	defer testCleanup()
 	Info("test")
-	var line int
-	format := "I0102 15:04:05.067890    1234 klog/klog_test.go:%d] test\n"
-	n, err := fmt.Sscanf(contents(infoLog), format, &line)
-	if n != 1 || err != nil {
+	var (
+		tm   time.Month
+		td   int
+		tH   int
+		tM   int
+		tS   int
+		tU   int
+		line int
+	)
+	format := fmt.Sprintf("I%%02d%%02d %%02d:%%02d:%%02d.%%06d %7d klog/klog_test.go:%%d] test\n", os.Getpid())
+	n, err := fmt.Sscanf(contents(infoLog), format,
+		&tm, &td, &tH, &tM, &tS, &tU, &line)
+	if n != 7 || err != nil {
 		t.Errorf("log format error: %d elements, error %s:\n%s", n, err, contents(infoLog))
 	}
 	// Scanf treats multiple spaces as equivalent to a single space,
 	// so check for correct space-padding also.
-	want := fmt.Sprintf(format, line)
+	want := fmt.Sprintf(format, tm, td, tH, tM, tS, tU, line)
 	if contents(infoLog) != want {
 		t.Errorf("log format error: got:\n\t%q\nwant:\t%q", contents(infoLog), want)
 	}
@@ -215,8 +203,8 @@ func TestHeaderWithDir(t *testing.T) {
 // Even in the Info log, the source character will be E, so the data should
 // all be identical.
 func TestError(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
+	_, testCleanup := testSetup(t)
+	defer testCleanup()
 	Error("test")
 	if !contains(errorLog, "E", t) {
 		t.Errorf("Error has wrong character: %q", contents(errorLog))
@@ -237,8 +225,8 @@ func TestError(t *testing.T) {
 // Even in the Info log, the source character will be W, so the data should
 // all be identical.
 func TestWarning(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
+	_, testCleanup := testSetup(t)
+	defer testCleanup()
 	Warning("test")
 	if !contains(warningLog, "W", t) {
 		t.Errorf("Warning has wrong character: %q", contents(warningLog))
@@ -254,10 +242,8 @@ func TestWarning(t *testing.T) {
 
 // Test that a V log goes to Info.
 func TestV(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
-	logging.verbosity.Set("2")
-	defer logging.verbosity.Set("0")
+	_, testCleanup := testSetup(t, "v", "2")
+	defer testCleanup()
 	V(2).Info("test")
 	if !contains(infoLog, "I", t) {
 		t.Errorf("Info has wrong character: %q", contents(infoLog))
@@ -269,10 +255,8 @@ func TestV(t *testing.T) {
 
 // Test that a vmodule enables a log in this file.
 func TestVmoduleOn(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
-	logging.vmodule.Set("klog_test=2")
-	defer logging.vmodule.Set("")
+	_, testCleanup := testSetup(t, "vmodule", "klog_test=2")
+	defer testCleanup()
 	if !V(1) {
 		t.Error("V not enabled for 1")
 	}
@@ -293,10 +277,8 @@ func TestVmoduleOn(t *testing.T) {
 
 // Test that a vmodule of another file does not enable a log in this file.
 func TestVmoduleOff(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
-	logging.vmodule.Set("notthisfile=2")
-	defer logging.vmodule.Set("")
+	_, testCleanup := testSetup(t, "vmodule", "notthisfile=2")
+	defer testCleanup()
 	for i := 1; i <= 3; i++ {
 		if V(Level(i)) {
 			t.Errorf("V enabled for %d", i)
@@ -322,8 +304,7 @@ func flushDaemon(stop <-chan struct{}) {
 }
 
 func TestSetOutputDataRace(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
+	_, testCleanup := testSetup(t)
 	stop := make(chan struct{})
 	defer testCleanup()
 	var wg sync.WaitGroup
@@ -380,10 +361,8 @@ var vGlobs = map[string]bool{
 
 // Test that vmodule globbing works as advertised.
 func testVmoduleGlob(pat string, match bool, t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
-	defer logging.vmodule.Set("")
-	logging.vmodule.Set(pat)
+	_, testCleanup := testSetup(t, "vmodule", pat)
+	defer testCleanup()
 	if V(2) != Verbose(match) {
 		t.Errorf("incorrect match for %q: got %t expected %t", pat, V(2), match)
 	}
@@ -397,27 +376,36 @@ func TestVmoduleGlob(t *testing.T) {
 }
 
 func TestRollover(t *testing.T) {
-	setFlags()
-	var err error
-	defer func(previous func(error)) { logExitFunc = previous }(logExitFunc)
-	logExitFunc = func(e error) {
-		err = e
-	}
-	defer func(previous uint64) { MaxSize = previous }(MaxSize)
-	MaxSize = 512
-	Info("x") // Be sure we have a file.
-	info, ok := logging.file[infoLog].(*syncBuffer)
+	_, testCleanup := testSetup(t)
+	defer testCleanup()
+
+	runHelperProcess(t)
+}
+
+func TestRolloverHelperProcess(t *testing.T) {
+	ok, args := amHelperProcess()
 	if !ok {
+		return
+	}
+
+	if len(args) != 0 {
+		t.Fatal("Wrong number of args")
+	}
+
+	MaxSize = 512
+	flagset := flag.NewFlagSet("klog", flag.ContinueOnError)
+	InitFlags(flagset)
+	flagset.Set("logtostderr", "false")
+	flagset.Set("add_dir_header", "false")
+
+	Info("x") // Be sure we have a file.
+	Flush()
+	fname0, err := os.Readlink(filepath.Join(os.TempDir(), filepath.Base(os.Args[0])+".INFO"))
+	if err != nil {
 		t.Fatal("info wasn't created")
 	}
-	if err != nil {
-		t.Fatalf("info has initial error: %v", err)
-	}
-	fname0 := info.file.Name()
 	Info(strings.Repeat("x", int(MaxSize))) // force a rollover
-	if err != nil {
-		t.Fatalf("info has error after big write: %v", err)
-	}
+	Flush()
 
 	// Make sure the next log file gets a file name with a different
 	// time stamp.
@@ -428,54 +416,42 @@ func TestRollover(t *testing.T) {
 	time.Sleep(1 * time.Second)
 
 	Info("x") // create a new file
+	Flush()
+	fname1, err := os.Readlink(filepath.Join(os.TempDir(), filepath.Base(os.Args[0])+".INFO"))
 	if err != nil {
-		t.Fatalf("error after rotation: %v", err)
+		t.Fatalf("unexpected error: %v", err)
 	}
-	fname1 := info.file.Name()
 	if fname0 == fname1 {
 		t.Errorf("info.f.Name did not change: %v", fname0)
 	}
-	if info.nbytes >= info.maxbytes {
-		t.Errorf("file size was not reset: %d", info.nbytes)
+	fileinfo, err := os.Stat(filepath.Join(os.TempDir(), filepath.Base(os.Args[0])+".INFO"))
+	if err != nil {
+		t.Fatalf("unexpected error: %v", fname0)
+	}
+	if fileinfo.Size() >= int64(MaxSize) {
+		t.Errorf("file size was not reset: %d", fileinfo.Size())
 	}
 }
 
 func TestOpenAppendOnStart(t *testing.T) {
+	_, testCleanup := testSetup(t)
+	defer testCleanup()
+
 	const (
 		x string = "xxxxxxxxxx"
 		y string = "yyyyyyyyyy"
 	)
 
-	setFlags()
-	var err error
-	defer func(previous func(error)) { logExitFunc = previous }(logExitFunc)
-	logExitFunc = func(e error) {
-		err = e
-	}
-
 	f, err := ioutil.TempFile("", "test_klog_OpenAppendOnStart")
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
-	logging.logFile = f.Name()
-
-	// Erase files created by prior tests,
-	for i := range logging.file {
-		logging.file[i] = nil
-	}
 
 	// Logging creates the file
-	Info(x)
-	_, ok := logging.file[infoLog].(*syncBuffer)
-	if !ok {
-		t.Fatal("info wasn't created")
-	}
-	if err != nil {
-		t.Fatalf("info has initial error: %v", err)
-	}
+	runHelperProcess(t, f.Name(), x)
+
 	// ensure we wrote what we expected
-	logging.flushAll()
-	b, err := ioutil.ReadFile(logging.logFile)
+	b, err := ioutil.ReadFile(f.Name())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -483,16 +459,11 @@ func TestOpenAppendOnStart(t *testing.T) {
 		t.Fatalf("got %s, missing expected Info log: %s", string(b), x)
 	}
 
-	// Set the file to nil so it gets "created" (opened) again on the next write.
-	for i := range logging.file {
-		logging.file[i] = nil
-	}
+	// Logging again should open the file again with O_APPEND instead of O_TRUNC
+	runHelperProcess(t, f.Name(), y)
 
-	// Logging agagin should open the file again with O_APPEND instead of O_TRUNC
-	Info(y)
 	// ensure we wrote what we expected
-	logging.flushAll()
-	b, err = ioutil.ReadFile(logging.logFile)
+	b, err = ioutil.ReadFile(f.Name())
 	if err != nil {
 		t.Fatalf("unexpected error: %v", err)
 	}
@@ -500,21 +471,39 @@ func TestOpenAppendOnStart(t *testing.T) {
 		t.Fatalf("got %s, missing expected Info log: %s", string(b), y)
 	}
 	// The initial log message should be preserved across create calls.
-	logging.flushAll()
-	b, err = ioutil.ReadFile(logging.logFile)
-	if err != nil {
-		t.Fatalf("unexpected error: %v", err)
-	}
 	if !strings.Contains(string(b), x) {
 		t.Fatalf("got %s, missing expected Info log: %s", string(b), x)
 	}
 }
 
+func TestOpenAppendOnStartHelperProcess(t *testing.T) {
+	ok, args := amHelperProcess()
+	if !ok {
+		return
+	}
+
+	if len(args) != 2 {
+		t.Fatal("Wrong number of args")
+	}
+	filename := args[0]
+	message := args[1]
+
+	flagset := flag.NewFlagSet("klog", flag.ContinueOnError)
+	InitFlags(flagset)
+	flagset.Set("logtostderr", "false")
+	flagset.Set("add_dir_header", "false")
+	flagset.Set("log_file", filename)
+
+	// Will os.Exit(2) if Info(x) or Flush() error.
+	Info(message)
+	Flush()
+}
+
 func TestLogBacktraceAt(t *testing.T) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
 	// The peculiar style of this code simplifies line counting and maintenance of the
 	// tracing block below.
+	var testCleanup func() = func() {}
+	defer func() { testCleanup() }()
 	var infoLine string
 	setTraceLocation := func(file string, line int, ok bool, delta int) {
 		if !ok {
@@ -522,10 +511,7 @@ func TestLogBacktraceAt(t *testing.T) {
 		}
 		_, file = filepath.Split(file)
 		infoLine = fmt.Sprintf("%s:%d", file, line+delta)
-		err := logging.traceLocation.Set(infoLine)
-		if err != nil {
-			t.Fatal("error setting log_backtrace_at: ", err)
-		}
+		_, testCleanup = testSetup(t, "log_backtrace_at", infoLine)
 	}
 	{
 		// Start of tracing block. These lines know about each other's relative position.
@@ -547,33 +533,30 @@ func TestLogBacktraceAt(t *testing.T) {
 }
 
 func BenchmarkLogs(b *testing.B) {
-	setFlags()
-	defer logging.swap(logging.newBuffers())
-
 	testFile, err := ioutil.TempFile("", "test.log")
 	if err != nil {
 		b.Error("unable to create temporary file")
 	}
 	defer os.Remove(testFile.Name())
 
-	logging.verbosity.Set("0")
-	logging.toStderr = false
-	logging.alsoToStderr = false
-	logging.stderrThreshold = fatalLog
-	logging.logFile = testFile.Name()
-	logging.swap([numSeverity]flushSyncWriter{nil, nil, nil, nil})
+	_, testCleanup := testSetup(b,
+		"v", "0",
+		"logtostderr", "false",
+		"alsologtostderr", "false",
+		"stderrthreshold", severityName[fatalLog],
+		"log_file", testFile.Name())
+	defer testCleanup()
 
 	for i := 0; i < b.N; i++ {
 		Error("error")
 		Warning("warning")
 		Info("info")
 	}
-	logging.flushAll()
+	Flush()
 }
 
 // Test the logic on checking log size limitation.
 func TestFileSizeCheck(t *testing.T) {
-	setFlags()
 	testData := map[string]struct {
 		testLogFile          string
 		testLogFileMaxSizeMB uint64
@@ -610,8 +593,10 @@ func TestFileSizeCheck(t *testing.T) {
 	for name, test := range testData {
 		test := test // capture loop variable
 		t.Run(name, func(t *testing.T) {
-			logging.logFile = test.testLogFile
-			logging.logFileMaxSizeMB = test.testLogFileMaxSizeMB
+			_, testCleanup := testSetup(t,
+				"log_file", test.testLogFile,
+				"log_file_max_size", strconv.FormatUint(test.testLogFileMaxSizeMB, 10))
+			defer testCleanup()
 			actualResult := test.testCurrentSize >= CalculateMaxSize()
 			if test.expectedResult != actualResult {
 				t.Fatalf("Was expecting result equals %v, got %v",
@@ -620,4 +605,3 @@ func TestFileSizeCheck(t *testing.T) {
 		})
 	}
 }
-
