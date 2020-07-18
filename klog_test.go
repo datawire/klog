@@ -621,13 +621,16 @@ func TestFileSizeCheck(t *testing.T) {
 	}
 
 	for name, test := range testData {
-		logging.logFile = test.testLogFile
-		logging.logFileMaxSizeMB = test.testLogFileMaxSizeMB
-		actualResult := test.testCurrentSize >= CalculateMaxSize()
-		if test.expectedResult != actualResult {
-			t.Fatalf("Error on test case '%v': Was expecting result equals %v, got %v",
-				name, test.expectedResult, actualResult)
-		}
+		test := test // capture loop variable
+		t.Run(name, func(t *testing.T) {
+			logging.logFile = test.testLogFile
+			logging.logFileMaxSizeMB = test.testLogFileMaxSizeMB
+			actualResult := test.testCurrentSize >= CalculateMaxSize()
+			if test.expectedResult != actualResult {
+				t.Fatalf("Was expecting result equals %v, got %v",
+					test.expectedResult, actualResult)
+			}
+		})
 	}
 }
 
